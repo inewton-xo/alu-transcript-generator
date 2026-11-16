@@ -5,32 +5,108 @@ import os
 
 def load_csv_data():
     """
-    Prompts the user for a filename, checks if it exists, 
-    and extracts all fields into a list of dictionaries.
+    Prompts the user for a filename, checks if it exists,
+    validates every row and extracts all fields into a list of dictionaries.
     """
-    filename = input("Enter the name of the CSV file to process (e.g., grades.csv): ")
-    
+    filename = input("Enter the name of the CSV file to process (e.g., grades.csv): ").strip()
+
     if not os.path.exists(filename):
         print(f"Error: The file '{filename}' was not found.")
         sys.exit(1)
-        
+
+    if not os.path.isfile(filename):
+        print(f"Error: '{filename}' is not a file.")
+        sys.exit(1)
+
+    required = ['assignment', 'group', 'score', 'weight']
     assignments = []
-    
+    errors = []
+    blank_rows = 0
+
     try:
-        with open(filename, mode='r', encoding='utf-8') as file:
+        with open(filename, mode='r', encoding='utf-8-sig', newline='') as file:
             reader = csv.DictReader(file)
+
+            if reader.fieldnames is None:
+                print(f"Error: The file '{filename}' is empty.")
+                sys.exit(1)
+
+            headers = [h.strip().lower() for h in reader.fieldnames if h is not None]
+            missing = [col for col in required if col not in headers]
+            if missing:
+                print(f"Error: The file is missing required column(s): {', '.join(missing)}.")
+                print(f"Expected columns: {', '.join(required)}.")
+                sys.exit(1)
+
             for row in reader:
-                # Convert numeric fields to floats for calculations
+                line = reader.line_num
+                # Normalise header names and trim whitespace from values
+                row = {
+                    (k or '').strip().lower(): (v.strip() if isinstance(v, str) else v)
+                    for k, v in row.items()
+                }
+
+                # Skip completely empty rows
+                if all(v in (None, '') for v in row.values()):
+                    blank_rows += 1
+                    continue
+
+                problems = []
+
+                name = row.get('assignment')
+                if not name:
+                    problems.append("assignment name is missing")
+
+                group = (row.get('group') or '').lower()
+                if group not in ('formative', 'summative'):
+                    problems.append(
+                        f"group must be 'Formative' or 'Summative' (found '{row.get('group') or ''}')"
+                    )
+
+                values = {}
+                for field in ('score', 'weight'):
+                    raw = row.get(field)
+                    if raw in (None, ''):
+                        problems.append(f"{field} is missing")
+                        continue
+                    try:
+                        number = float(raw)
+                    except ValueError:
+                        problems.append(f"{field} '{raw}' is not a number")
+                        continue
+                    if not math.isfinite(number):
+                        problems.append(f"{field} '{raw}' is not a valid number")
+                        continue
+                    values[field] = number
+
+                if problems:
+                    errors.append(f"Line {line}: " + "; ".join(problems))
+                    continue
+
                 assignments.append({
-                    'assignment': row['assignment'],
-                    'group': row['group'],
-                    'score': float(row['score']),
-                    'weight': float(row['weight'])
+                    'assignment': name,
+                    'group': group.capitalize(),
+                    'score': values['score'],
+                    'weight': values['weight']
                 })
-        return assignments
-    except Exception as e:
+    except UnicodeDecodeError:
+        print(f"Error: '{filename}' could not be read as a UTF-8 text file.")
+        sys.exit(1)
+    except (OSError, csv.Error) as e:
         print(f"An error occurred while reading the file: {e}")
         sys.exit(1)
+
+    if blank_rows:
+        print(f"Note: skipped {blank_rows} empty row(s).")
+
+    if errors:
+        print(f"Error: found {len(errors)} invalid row(s) in '{filename}':")
+        for err in errors:
+            print(f"  - {err}")
+        print("Please fix the file and run the program again.")
+        sys.exit(1)
+
+    return assignments
 
 def evaluate_grades(data):
     """
